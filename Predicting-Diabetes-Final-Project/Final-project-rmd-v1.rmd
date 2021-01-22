@@ -1,0 +1,352 @@
+---
+title: "Probability and Statistics"
+author: "Naveen Narayanan Meyyappan and Fatima AlSaadeh"
+date: "11/12/2019"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Predicting Diabetics in Pima Indians
+
+In this project, we will design and develop a supervised learning model for predicting whether a patient has diabetes or not. Diabetes is a disease that occurs when blood glucose, also called blood sugar, is too high. Blood glucose is the main source of energy and comes from the food we eat. Insulin is a hormone made by the pancreas that allows our body to use sugar (glucose) from carbohydrates in the food that we eat for energy or to store glucose for future use. Insulin helps keeps our blood sugar level from getting too high (hyperglycemia) or too low (hypoglycemia). When our body does not produce enough insulin to convert the glucose, the excess glucose then stays in our blood and doesn’t reach our cells. Over time, having too much glucose in our blood can cause health problems. Although diabetes has no cure, we can take steps to manage our diabetes and stay healthy. In this project, we will develop a machine learning model to predict whether a patient has diabetes or not based on different characteristics such as Blood Pressure, Skin Thickness, Insulin Level, BMI, Plasma Glucose Level and so on. The data set for this project is taken from the National Institute of Diabetes and Digestive and Kidney Diseases. All patients in this data set are females at least 21 years old of Pima Indian heritage. The Pima Indians (or Akimel Oʼodham, also spelled Akimel Oʼotham, “River People”, formerly known as Pima) are a group of Native Americans living in an area consisting of what is now central and southern Arizona. Diabetes is an increasingly prevalent chronic disease characterized by the body’s inability to metabolize glucose. Finding the disease at an early stage helps reduce medical costs and the risk of patients having more complicated health problems. This modeling project will help detect diabetes at early stages and will help us take effective action and to stay healthy.
+
+## Data Source
+
+https://www.kaggle.com/uciml/pima-indians-diabetes-database
+This dataset is originally from the National Institute of Diabetes and Digestive and Kidney Diseases
+
+```{r include = FALSE}
+library(ggplot2)
+library(tree)
+library(rpart)
+library(randomForest)
+library(caret)
+library(rpart.plot)
+library(data.table) 
+library(plyr)
+library(corrplot)
+library(ROCR)
+set.seed(1)
+```
+
+## Data Dictionary
+
+Pregnancies: Number of times pregnant 
+Glucose: Plasma glucose concentration a 2 hours in an oral glucose tolerance test 
+Blood Pressure: Diastolic blood pressure (mm Hg) 
+Skin Thickness: Triceps skin fold thickness (mm) 
+Insulin: 2-Hour serum insulin (mu U/ml) 
+BMI: Body mass index (weight in kg/(height in m)^2) 
+Diabetes Pedigree Function: A function which scores likelihood of diabetes based on family history 
+Age: Age (years) 
+Outcome: Class variable (0 or 1) 268 of 768 are 1, the others are 0 
+
+
+
+# Data Summary
+
+```{r}
+# Reading the data
+data <- read.csv(file = "diabetes.csv",header = TRUE,sep = ",")
+summary(data)
+nrow(data) # Number of rows in data
+ncol(data) # Number of columns in data
+```
+
+There are 768 observations (rows) of 9 variables (columns). All the 9 columns are read as numerical and the range of the values in each columns are summarized as given above.
+
+# Exploratory Data Analysis
+
+In the above result we find that the outcome column in data is read as a numerical column but actually the outcome column is a categorical column (consists of 0s and 1s only). We will convert it to a categorical variable.
+
+```{r}
+data$Outcome=as.factor(data$Outcome)
+dataforplot=data
+dataforplot$Outcome = revalue(data$Outcome, c("0"="Not Diabetic", "1"="Diabetic"))
+```
+
+Here the outcome variable 1 indicates that the patient is affected by diabetes and 0 indicates that the patient is not diabetic.
+
+```{r}
+table(dataforplot$Outcome)
+```
+
+Of the 768 patients considered about 200 of them are diabetic.
+Now let us plot some distributions to get some insights about the data.
+
+
+### Diabetic Pedigree Function vs Outcome
+
+```{r}
+boxplot(dataforplot$DiabetesPedigreeFunction~Outcome,data=dataforplot, main="DiabetesPedigreeFunction per Age ",
+        xlab="", ylab="DiabetesPedigreeFunction", col="brown")
+```
+
+
+### Blood Pressure vs Outcome
+
+```{r}
+boxplot(dataforplot$BloodPressure~Outcome,data=dataforplot, main="Blood Pressure ",
+        xlab="", ylab="Blood Pressure", col="brown")
+```
+
+
+### Age vs Outcome
+
+```{r}
+ggplot(dataforplot, aes(fill=dataforplot$Outcome, x=dataforplot$Age)) + 
+        geom_histogram(position="stack", stat="bin", binwidth = 10) + 
+        stat_bin(binwidth=10, geom="text", colour="white", size=3.5, aes(label=..count.., group=dataforplot$Outcome, y=(..count..)), position=position_stack(vjust=0.5)) +
+        scale_x_continuous(name="Age",breaks=seq(0,max(data$Age), 10)) + 
+        scale_y_continuous(name="Number of Patients") +
+        ggtitle("Number of Patients in Age group") + 
+        scale_fill_discrete(name = "") +
+        theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+### Glucose vs Outcome
+
+```{r}
+ggplot(dataforplot, aes(fill=dataforplot$Outcome, x=dataforplot$Glucose)) + 
+        geom_histogram(position="stack", stat="bin", binwidth = 20) + 
+        stat_bin(binwidth=20, geom="text", colour="white", size=3.5, aes(label=..count.., group=dataforplot$Outcome, y=(..count..)), position=position_stack(vjust=0.5)) +
+        scale_x_continuous(name="Glucose",breaks=seq(0,max(data$Glucose), 20)) + 
+        scale_y_continuous(name="Number of Patients") +
+        ggtitle("Glucose Levels") + 
+        scale_fill_discrete(name = "") +
+        theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+### Correlation matrix and heatmap 
+
+```{r}
+cor(dataforplot[,1:8])
+heatmap(cor(dataforplot[,1:8]),Colv = NA, Rowv = NA, scale="column")
+```
+
+The correlation matrix and the heat map shows that no two variables are having high correlation. The highest correlation is between Age and Pregnancies (0.54) which is not significant enough (>0.7) to be explored more.
+
+## Modelling
+Now let us develop a model to predict if a patient has diabetes or not. For this the first step would be to split the data into train and test data sets.
+
+```{r}
+# 2/3 of the data is used for training and 1/3 is used as testing data set
+index_train<-sample(768,512)
+train_set <- data[index_train, ]
+test_set <- data[-index_train, ]
+```
+
+
+### Logistic Regression Model
+
+We will start off with Logistic Regression. Logistic regression also called a logit model, is used to model dichotomous outcome variables. In the logit model, the log odds of the outcome are modeled as a linear combination of the predictor variables. Logistic regression is conceptually similar to linear regression, where linear regression estimates the target variable. Instead of predicting values, as in the linear regression, logistic regression would estimate the odds of a certain event occurring. Logistic Regression is a supervised parametric learning model. In other words, the data should obey certain assumptions before developing the logistic regression model.
+
+#### Assumptions of Logistic Regression Model
+
+Assumptions of Logistic Regression Model
+1. Binary logistic regression requires the dependent variable to be binary and ordinal logistic regression requires the dependent variable to be ordinal. 
+-> Our dependent variable (Outcome) is a binary categorical variable.
+
+2. Logistic regression requires observations to be independent of each other. In other words, the observations should not come from repeated measurements or matched data.
+-> Each row in the data set is independent of that of the other. Each row represents the data of a patient.
+
+3. Logistic regression requires there to be little or no multi collinearity among the independent variables. This means that the independent variables should not be too highly correlated with each other. 
+-> From the correlation matrix we found that there is not much collinearity between the columns of this data set.
+
+4. Logistic regression assumes the linearity of independent variables and logs odds. although this analysis does not require the dependent and independent variables to be related linearly, it requires that the independent variables are linearly related to the log odds. 
+-> The independent variables are linear with log-odds.
+
+5. Logistic regression typically requires a large sample size. 
+-> In our data set we have 798 observations which are large enough for 8 independent variables.
+
+
+#### Building the Model
+
+As all the assumptions are satisfied. Let us develop the model
+```{r}
+train_set_logistic=train_set
+test_set_logistic=test_set
+logistic_model <- glm(Outcome ~ ., family = "binomial", data = train_set_logistic)
+print(summary(logistic_model))
+```
+
+#### Understanding the Results
+
+These were the results obtained for a logistic regression model. The result can be interpreted as follows:
+Intercepts, Estimates, Standard Errors and P values.
+We have the various columns and their estimate values. The estimate values indicate the slope for the best fit line and each column’s value is multiplied by this slope. Then we have the standard error of the slope for each variable in the model. We also have the z scores associated with each column. The last column is the p value for these z scores. If the p value falls below 0.05(95% interval, then those columns are highlighted using the asterisk (*) symbol). The first row consists of the intercept which indicates the offset that has to be added to the model equation.
+Null and Residual Deviance The null deviance shows how well the response variable is predicted by a model that includes only the intercept (grand mean) whereas residual deviance is the deviance with the inclusion of independent variables. Hence for calculating the null deviance, the degrees of freedom will be 512-1=511 and we have 503 degrees of freedom for residual deviance (503=512-8-1). We subtract 8 as we are having 8 independent variables. Residual is the difference between the actual and predicted value. So lower the residual score better the model.
+AIC Akaike’s Information Criterion (AIC) is -2log-likelihood+2k where k is the number of estimated parameters. It is useful for comparing models different models. Lower the AIC better is the performance of the model.
+Fisher Scoring Iterations This is the number of iterations to fit the model. The logistic regression uses an iterative maximum likelihood algorithm to fit the data. The Fisher method is the same as fitting a model by iteratively re-weighting the least squares. It indicates the optimal number of iterations. Similar to Linear Regression, the model generates a linear equation using the given estimates and intercepts. Then the values from this equation will be converted into probabilities using the logit function. From the above result we find that Pregnancies, Glucose, Blood Pressure, Diabetes Pedigree Function, MI and Age are significant variables as they have the p values close to 0.05 or less than 0.05. The variable which does not contribute much for the model would be skin thickness.
+
+#### Predicting in train and test data
+
+Now let us try to predict the values in the train and test set using our developed model.
+```{r}
+train_set_logistic$Prediction <- predict( logistic_model, newdata = train_set_logistic, type = "response" )
+test_set_logistic$Prediction  <- predict( logistic_model, newdata = test_set_logistic , type = "response" )
+```
+
+The prediction column in both the data sets will now have probability values associated with each row. Now we need to convert this probability scores to whether a patient has diabetes or not using a threshold value.
+
+#### Identifying the correct threshold value
+
+Before setting the threshold let us take a look at the plot below:
+```{r}
+# distribution of the prediction score grouped by known outcome
+ggplot(train_set_logistic, aes(Prediction, color = as.factor(Outcome) ) ) + 
+        geom_density( size = 1 ) +
+        ggtitle( "Training Set's Predicted Score" )
+```
+In the above plot We have two curves - red and blue. The red curve indicates the patients who do not have diabetes, and the blue curve shows the patient who has diabetes. The x-axis indicates the prediction probabilities, and the y-axis shows the number of data points. In an ideal situation, we would want the peaks of the two curves to be separated as much as possible. We also find that setting a threshold of 0.5 for the prediction score will not work out. From the graph, we find that the two curves cutoff at 0.3.
+The other reason why a threshold of 0.5 will not work out is that, in our sample out of the 768 samples, only 268 are affected by diabetes. This is not a 50-50 proportion. In other words, the probability of encountering a diabetic patient is less than that of a non-diabetic patient.
+
+#### ROC Curve
+
+So now, we need to find a proper threshold for our model. The (Receiver Operating Characteristics) ROC curve will now help us to fix the threshold. A receiver operating characteristic curve, or ROC curve, is a graphical plot that illustrates the diagnostic ability of a binary classifier system as its discrimination threshold is varied. The ROC curve is created by plotting the true positive rate (TPR) against the false positive rate (FPR) at various threshold settings. The true-positive rate is also known as sensitivity, recall, or probability of detection in machine learning. The false-positive rate is also known as the probability of false alarm and can be calculated as (1 − specificity). It can also be thought of as a plot of the power as a function of the Type I Error of the decision rule (when the performance is calculated from just a sample of the population, it can be thought of as estimators of these quantities). So let us plot our ROC curve and fix our threshold value. Now let us define some more terms such as TPR, FPR, TNR, FNR, Precision, and Accuracy. Positive (P) : Observation is positive (for example: Diabetic). 
+Negative (N): Observation is not positive (for example: Not Diabetic). 
+True Positive (TP): Observation is positive, and is predicted to be positive. 
+False Negative (FN): Observation is positive, but is predicted negative. 
+True Negative (TN): Observation is negative, and is predicted to be negative. 
+False Positive (FP): Observation is negative, but is predicted positive. 
+Total = TP+TN+FP+FN 
+Accuracy = (TP+TN)/TP+TN+FP+FN 
+Sensitivity or Recall or TPR = TP/(TP+FN) 
+Precision = TP/(TP+FP) 
+Specificity or TNR = TN/(TN+FP) 
+F-Measure = (2RecallPrecision)/(Recall+Precision) This is a weighted average of the true positive rate (recall) and precision. 
+Cohen’s Kappa: This is essentially a measure of how well the classifier performed as compared to how well it would have performed simply by chance. 
+Now here we have a trade-off, the tradeoff is that we can’t increase both sensitivity and specificity at the same time, and we need to select one of the two. So in our case of predicting diabetes, it is better to increase TPR and compromise on FPR. This is because this model will be used at the preliminary stage to identify if the patient is diabetic or not. So the error of marking a truly diabetic patient as without diabetes would be bad compared to the error of marking a non-diabetic patient. The non-diabetic patient will go through further screening, and he/she will come to know that they do not have diabetes. So we would like to increase sensitivity for this situation and compromise on specificity.
+
+ 
+```{r}
+ROCRpred = prediction(train_set_logistic$Prediction, train_set_logistic$Outcome)
+ROCRperf = performance(ROCRpred, "tpr", "fpr")
+plot(ROCRperf, colorize=TRUE, print.cutoffs.at=seq(0,1,by=0.1), text.adj=c(-0.2,1.7), main="ROC curve")
+```
+
+The threshold is varied from 0 to 1 and the ROC curve is plotted for the same. An Ideal ROC curve will look like a box. The more the curve extends to the top left corner, the better the model. An ideal model will have the ROC curve as a square and the area under this curve under ideal situation will be 1. For a null model we will have the ROC curve to be a straight line with slope 1 and passing through the origin. The area under the ROC curve for a null model will be 0.5. Our ROC curve has more AUC than 0.5, as a result it performs better than a null model. We should choose the threshold value from this curve such that the ROC curve saturates and shows not much increase in True Positive Rate for decrease in threshold value. So we will choose 0.30 to be our threshold value for our model.
+
+#### Confusion Matrix
+```{r}
+train_set_logistic$Prediction=ifelse(train_set_logistic$Prediction > 0.30,1,0)
+table(train_set_logistic$Outcome, train_set_logistic$Prediction)
+confusionMatrix(as.factor(as.numeric(train_set_logistic$Prediction)),as.factor(train_set_logistic$Outcome))
+```
+For a threshold of 0.3, the model performs well and gives an accuracy of 75.2% on train data. Both the sensitivity and specificity are also high.
+
+```{r}
+test_set_logistic$Prediction=ifelse(test_set_logistic$Prediction > 0.30,1,0)
+table(test_set_logistic$Outcome, test_set_logistic$Prediction)
+confusionMatrix(as.factor(as.numeric(test_set_logistic$Prediction)),as.factor(test_set_logistic$Outcome))
+```
+
+The model performs similarly with the test data and has nearly the same accuracy, sensitivity and specificity with that of the train data. This is a good indication that the model is not trying to over fit or under fit the data.
+
+### Decision Tree
+
+Let us proceed to develop our next model, Decision Trees Decision trees are non-parametric models meaning that they don’t have any underlying assumptions about the distribution of data/errors. Hence we don’t have to check for assumption, we can go ahead to develop the model
+
+```{r}
+train_set_dt=train_set
+test_set_dt=test_set
+dt_model=rpart(Outcome~., data=train_set_dt, method = 'class')
+dt_model_forplot=rpart(Outcome~., data=train_set_dt[,c(1,2,6,8,9)], method = 'class') # for better visualization of the tree.
+summary(dt_model)
+rpart.plot(dt_model_forplot, cex=0.5)
+```
+
+We were also able to plot the tree by selecting very limited number of columns for better visualization. We can see the splits at each level and the number of elements considered at each level. This model is very easy to develop and understand.
+```{r}
+train_set_dt$Prediction <- predict( dt_model, newdata = train_set_dt, type = "class" )
+test_set_dt$Prediction  <- predict( dt_model, newdata = test_set_dt , type = "class" )
+```
+
+#### Performance of the Model
+
+Now let us analyze the accuracy and other parameters of the decision tree model.
+
+```{r}
+table(train_set_dt$Outcome, train_set_dt$Prediction)
+confusionMatrix(as.factor((train_set_dt$Prediction)),as.factor(train_set_dt$Outcome))
+table(test_set_dt$Outcome, test_set_dt$Prediction)
+confusionMatrix(as.factor((test_set_dt$Prediction)),as.factor(test_set_dt$Outcome))
+```
+
+From the above result, we observe that the decision tree gives an accuracy of about 90% on train data and 70% on test data. This is because the decision tree has over fit itself to the train data and hence the accuracy drops in test data. Even though the accuracy is less, the decision tree shows a very high sensitivity on test data.
+
+
+### Random Forest
+
+Let us move on to develop the Random Forest model. Random Forest is one such very powerful ensemble machine learning algorithm which works by creating multiple decision trees and then combining the output generated by each of the decision trees. The random forest algorithm works by aggregating the predictions made by multiple decision trees of varying depth. Every decision tree in the forest is trained on a subset of the dataset called the bootstrapped dataset.
+
+```{r}
+train_set_rf=train_set
+test_set_rf=test_set
+rf_model=randomForest(Outcome~., data=train_set_rf, ntree = 300, mtry = 6, importance = TRUE, OOB  = TRUE)
+print(rf_model)
+```
+
+The portion of samples that were left out during the construction of each decision tree in the forest are referred to as the Out-Of-Bag (OOB) dataset.
+
+Let us predict the results for train and test data using the randomforest model
+```{r}
+train_set_rf$Prediction <- predict( rf_model, newdata = train_set_rf, type = "class" )
+test_set_rf$Prediction  <- predict( rf_model, newdata = test_set_rf , type = "class" )
+```
+
+Let us calculate the various parameters of the confusion matrix
+```{r}
+table(train_set_rf$Outcome, train_set_rf$Prediction)
+confusionMatrix(as.factor((train_set_rf$Prediction)),as.factor(train_set_rf$Outcome))
+table(test_set_rf$Outcome, test_set_rf$Prediction)
+confusionMatrix(as.factor((test_set_rf$Prediction)),as.factor(test_set_rf$Outcome))
+```
+We observe that the random forest performs really well with the train data set and nearly shows a 100% accuracy on the train data but it failed to perform that well in the test data and gave an accuracy of 77% but it is still better than the accuracies of decision tree and logistic regression models. We can call this model also overfitting as the accuracy in test is not as good as in train data set.
+
+### Comparison of different models
+
+All the 3 models have nearly the same accuracy. Of the 3 models, Random Forest performs well gives the highest accuracy for the given data. So we can tune the random forest model to perform well and use it to predict whether a Pima Indian Patient has diabetics or not.
+
+## Future Work
+
+We can improve these models by adding extra features and fine tuning them. For example, the logistic regression model can be improved by choosing a better threshold value. This can be done by evaluating a cost function for various threshold values. The decision tree model could have been pruned to avoid overfitting. The hyper parameters of Random forest could also be tuned to increase the overall accuracy of the model. Apart from the 3 model we could have tried other advanced models such as Ada Boosting trees, Gradient Boosting in Random forest, Deep Learning and Neural Network models. We could also improve the training of all models by using k-fold cross validation. One more option to improve the model would be to add more external features that can be related to diabetes in Pima Indians and we could also take a larger sample to improve the quality of our models.
+
+## References
+1. https://www.niddk.nih.gov/health-information/diabetes/overview/what-is-diabetes
+2. https://www.endocrineweb.com/conditions/type-1-diabetes/what-insulin
+3. https://en.wikipedia.org/wiki/Pima_people
+4. https://bmcendocrdisord.biomedcentral.com/articles/10.1186/s12902-019-0436-6
+5. https://www.geeksforgeeks.org/confusion-matrix-machine-learning/
+6. https://www.dataschool.io/simple-guide-to-confusion-matrix-terminology/
+7. https://webfocusinfocenter.informationbuilders.com/wfappent/TLs/TL_rstat/source/LogisticRegression43.htm
+8. https://discuss.analyticsvidhya.com/t/what-is-null-and-residual-deviance-in-logistic-regression/2605
+9. https://stats.stackexchange.com/questions/110969/using-the-caret-package-is-it-possible-to-obtain-confusion-matrices-for-specific
+10. https://www.healthnewsreview.org/toolkit/tips-for-understanding-studies/understanding-medical-tests-sensitivity-specificity-and-positive-predictive-value/
+11. https://medium.com/analytics-vidhya/a-guide-to-machine-learning-in-r-for-beginners-part-5-4c00f2366b90
+12. https://en.wikipedia.org/wiki/Receiver_operating_characteristic
+13. http://ethen8181.github.io/machine-learning/unbalanced/unbalanced.html
+14. http://r-statistics.co/Logistic-Regression-With-R.html
+15. https://towardsdatascience.com/what-is-a-decision-tree-22975f00f3e1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
